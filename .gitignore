@@ -3,6 +3,7 @@
 *.xml
 *.zip
 *.Rmd
+.env
 *.pdf
 *.docx
 *.pptx

@@ -10,6 +10,11 @@ import polars as pl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
+try:
+    import oracledb
+except ImportError:  # pragma: no cover - installed as needed for Oracle mode
+    oracledb = None
+
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import letter
@@ -41,12 +46,43 @@ def get_database_config():
     }
 
 
-def load_data_source(data_source):
-    """Load the STR dataset from either a CSV path or a future database query source.
+def load_oracle_select(sql_query, config=None):
+    """Load STR data by executing a SQL SELECT against Oracle."""
+    if oracledb is None:
+        raise ImportError(
+            "The 'oracledb' package is required for Oracle database inputs. "
+            "Install it with: pip install oracledb"
+        )
 
-    This keeps the current behavior unchanged for file-based runs while establishing
-    a single entry point for Oracle-backed direct-query inputs.
-    """
+    if config is None:
+        config = get_database_config()
+
+    missing = [key for key, value in config.items() if not value]
+    if missing:
+        raise ValueError(
+            "Missing Oracle database settings. Please set the required values in your .env file: "
+            + ", ".join(missing)
+        )
+
+    print("Loading STR source from Oracle SELECT query...")
+    with oracledb.connect(
+        user=config["user"],
+        password=config["password"],
+        dsn=config["dsn"],
+    ) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql_query)
+            columns = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()
+
+    if not rows:
+        return pl.DataFrame(schema=columns).lazy()
+
+    return pl.DataFrame(rows, schema=columns).lazy()
+
+
+def load_data_source(data_source):
+    """Load the STR dataset from either a CSV path or a database query source."""
     if isinstance(data_source, str) and os.path.exists(data_source):
         print(f"Loading STR source from CSV file: {data_source}")
         return pl.scan_csv(
@@ -56,10 +92,7 @@ def load_data_source(data_source):
         )
 
     if isinstance(data_source, str) and data_source.strip().upper().startswith("SELECT"):
-        raise NotImplementedError(
-            "Direct Oracle SELECT loading is not implemented yet. "
-            "This is the next step after the input abstraction is in place."
-        )
+        return load_oracle_select(data_source, get_database_config())
 
     raise FileNotFoundError(
         f"Please provide a valid STR source path or SQL SELECT. Current: {data_source}"
@@ -74,9 +107,11 @@ def generate_qc_report(str_file, file_prefix, final=False):
     print(f"STARTING QC REPORT GENERATION: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
 
-    # Make sure the data file exists before proceeding
-    if not os.path.exists(str_file):
-        raise FileNotFoundError(f"Please provide a valid path for str_file. Current: {str_file}")
+    # Make sure the data source is present before proceeding; SQL SELECT strings
+    # bypass the filesystem check because they are executed directly against Oracle.
+    if isinstance(str_file, str) and not str_file.strip().upper().startswith("SELECT"):
+        if not os.path.exists(str_file):
+            raise FileNotFoundError(f"Please provide a valid path for str_file. Current: {str_file}")
     
     # Setup the output PDF filename based on the file prefix
     pdf_filename = f"{file_prefix}_QC_Report.pdf"
