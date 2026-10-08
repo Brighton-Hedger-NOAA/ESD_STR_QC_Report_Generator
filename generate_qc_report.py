@@ -5,6 +5,7 @@ import math
 import time
 from datetime import datetime
 from pathlib import Path
+from dotenv import load_dotenv
 import polars as pl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -23,6 +24,21 @@ from scripts.pdf_content_builder import build_pdf_story
 
 # Utility function to generate a manifest file for production output
 from scripts.export_utils import generate_readme, zip_production_artifacts
+
+
+load_dotenv()
+
+
+def get_database_config():
+    """Read Oracle connection settings from environment variables.
+
+    A local .env file can hold credentials without hardcoding secrets into the repo.
+    """
+    return {
+        "user": os.getenv("ORACLE_USER"),
+        "password": os.getenv("ORACLE_PASSWORD"),
+        "dsn": os.getenv("ORACLE_DSN"),
+    }
 
 
 def load_data_source(data_source):
