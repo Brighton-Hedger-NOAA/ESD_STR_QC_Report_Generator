@@ -25,6 +25,31 @@ from scripts.pdf_content_builder import build_pdf_story
 from scripts.export_utils import generate_readme, zip_production_artifacts
 
 
+def load_data_source(data_source):
+    """Load the STR dataset from either a CSV path or a future database query source.
+
+    This keeps the current behavior unchanged for file-based runs while establishing
+    a single entry point for Oracle-backed direct-query inputs.
+    """
+    if isinstance(data_source, str) and os.path.exists(data_source):
+        print(f"Loading STR source from CSV file: {data_source}")
+        return pl.scan_csv(
+            data_source,
+            schema_overrides={"INSTRUMENTSN": pl.String},
+            try_parse_dates=True,
+        )
+
+    if isinstance(data_source, str) and data_source.strip().upper().startswith("SELECT"):
+        raise NotImplementedError(
+            "Direct Oracle SELECT loading is not implemented yet. "
+            "This is the next step after the input abstraction is in place."
+        )
+
+    raise FileNotFoundError(
+        f"Please provide a valid STR source path or SQL SELECT. Current: {data_source}"
+    )
+
+
 def generate_qc_report(str_file, file_prefix, final=False): 
     # Start the global script timer immediately
     script_start_time = time.time()
@@ -59,11 +84,7 @@ def generate_qc_report(str_file, file_prefix, final=False):
 
 
     # 1. Read everything purely as a streaming source (LazyFrame)
-    STR_lazy = pl.scan_csv(
-        str_file, 
-        schema_overrides={"INSTRUMENTSN": pl.String},
-        try_parse_dates=True
-    )
+    STR_lazy = load_data_source(str_file)
 
 
     # 2. Run QC metrics using the streaming architecture
@@ -170,8 +191,8 @@ if __name__ == "__main__":
     initiative = "NCRMP"
     organization = "ESD"
     data_type = "TEMPERATURE"
-    region = "MARIAN"
-    year = "2025"
+    region = "SAMOA"
+    year = "2026"
 
     file_prefix = f"{initiative}_{organization}_{data_type}_{region}_{year}"
 
