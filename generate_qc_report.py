@@ -54,6 +54,10 @@ def load_oracle_select(sql_query, config=None):
             "Install it with: pip install oracledb"
         )
 
+    instant_client_dir = r"C:\Oracle\InstantClient\instantclient_23_7"
+    if os.path.exists(instant_client_dir):
+        oracledb.init_oracle_client(lib_dir=instant_client_dir)
+
     if config is None:
         config = get_database_config()
 
@@ -65,6 +69,7 @@ def load_oracle_select(sql_query, config=None):
         )
 
     print("Loading STR source from Oracle SELECT query...")
+    rows = []
     with oracledb.connect(
         user=config["user"],
         password=config["password"],
@@ -73,7 +78,19 @@ def load_oracle_select(sql_query, config=None):
         with connection.cursor() as cursor:
             cursor.execute(sql_query)
             columns = [col[0] for col in cursor.description]
-            rows = cursor.fetchall()
+
+            batch_size = 1_000_000
+            rows_fetched = 0
+            while True:
+                batch = cursor.fetchmany(batch_size)
+                if not batch:
+                    break
+
+                rows.extend(batch)
+                rows_fetched += len(batch)
+
+                if rows_fetched % batch_size == 0:
+                    print(f"Fetched {rows_fetched:,} rows from Oracle query...")
 
     if not rows:
         return pl.DataFrame(schema=columns).lazy()
@@ -248,15 +265,18 @@ if __name__ == "__main__":
     file_prefix = f"{initiative}_{organization}_{data_type}_{region}_{year}"
 
     # -------------------------------------------------------------------------
-    # STR DATA PATH BELOW: Update this to point to the correct STR data file for your region and year.
+    # DATA SOURCE BELOW:
+    # Use the Oracle view directly for the database-backed workflow.
+    # If you want to switch back to a local CSV file, replace this SQL with a file path.
     # -------------------------------------------------------------------------
 
-    str_file = rf"C:\Users\Samuel.Chiu\Documents\Repositories\STR_automation\NCRMP_STR_DATA\NCRMP_ESD_TEMPERATURE_MARIAN_2025.csv"   
-    
-
+    oracle_view_sql = """
+        SELECT *
+        FROM GISDAT.V_NCEI_OCC_STR_PRIA_ERRDAP_2026
+    """
 
     # -------------------------------------------------------------------------
     # TOGGLE EXECUTION MODE HERE
     # Change final=False to final=True when you are ready to archive.
     # -------------------------------------------------------------------------
-    generate_qc_report(str_file, file_prefix, final=False)
+    generate_qc_report(oracle_view_sql, file_prefix, final=False)
