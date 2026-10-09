@@ -1,10 +1,29 @@
 import html
 import io
+import os
+import re
 from datetime import datetime
 import polars as pl
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from reportlab.platypus import Paragraph, Spacer, Image, PageBreak
+
+
+def _describe_source_name(str_file):
+    """Return a human-friendly source label for PDF output."""
+    if not str_file:
+        return "Unknown source"
+
+    raw = str(str_file).strip()
+    if raw.upper().startswith("SELECT"):
+        match = re.search(r"\bFROM\s+([A-Za-z0-9_$.]+)", raw, flags=re.IGNORECASE)
+        if match:
+            source = match.group(1)
+            return source.split(".")[-1]
+        return "Oracle source"
+
+    return os.path.basename(raw)
+
 
 def build_pdf_story(story, qc, STR_lazy, styles, str_file):
     """
@@ -18,9 +37,10 @@ def build_pdf_story(story, qc, STR_lazy, styles, str_file):
     df_to_pdf_table = styles['df_to_pdf_table']
 
     # --- Document Header Elements ---
+    source_label = _describe_source_name(str_file)
     story.append(Paragraph("STR QC Report Details", title_style))
-    story.append(Paragraph("The file used in this QC routine is:", normal_style))
-    story.append(Paragraph(f"{html.escape(str_file)}", code_style))
+    story.append(Paragraph("The source used in this QC routine is:", normal_style))
+    story.append(Paragraph(f"{html.escape(source_label)}", code_style))
     story.append(Paragraph(f"QC run at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} HST", normal_style))
     story.append(Paragraph(f"Number of records in data file: {qc['total_records']}", normal_style))
     story.append(Paragraph(f"Number of STR time series in data file: {qc['unique_series_count']}", normal_style))
@@ -139,9 +159,16 @@ def build_pdf_story(story, qc, STR_lazy, styles, str_file):
 
     print("Downsampling data for localized sensor charts...")
 
+    # Oracle-backed data comes in as ISO strings; normalize the timestamp before
+    # the charting pass so Polars can safely truncate it by hour.
+    STR_plot_lazy = STR_lazy.with_columns([
+        pl.col('TIMESTAMP').str.to_datetime(time_zone='UTC', strict=False),
+        pl.col('TEMP_C').cast(pl.Float64, strict=False),
+    ])
+
     # 1. Group by instrument and hour/day to massively compress the data in-stream
     plot_data_lazy = (
-        STR_lazy
+        STR_plot_lazy
         .group_by([
             pl.col('INSTFIELDSUMMARYID'),
             pl.col('INSTRUMENTSN'),
