@@ -7,6 +7,18 @@ def run_quality_control(data: pl.LazyFrame) -> dict:
     Accepts a LazyFrame to optimize memory performance on large datasets.
     """
     qc_results = {}
+    schema = data.collect_schema()
+    datetime_columns = [
+        column for column in (
+            'DEPLOY_UTC', 'RETRIEVE_UTC', 'VALID_DATA_START',
+            'VALID_DATA_END', 'TIMESTAMP'
+        )
+        if schema[column] == pl.String
+    ]
+    if datetime_columns:
+        data = data.with_columns(
+            pl.col(datetime_columns).str.to_datetime(time_zone='UTC')
+        )
     
     # =========================================================================
     # PHASE 1: COUNTS, NULL CHECKS, & GLOBAL RANGES (UNIFIED PASS 1)

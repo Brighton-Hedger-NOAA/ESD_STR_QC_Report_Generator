@@ -3,6 +3,7 @@ import io
 import html
 import math
 import time
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -54,9 +55,19 @@ def load_oracle_select(sql_query, config=None):
             "Install it with: pip install oracledb"
         )
 
-    instant_client_dir = r"C:\Oracle\InstantClient\instantclient_23_7"
-    if os.path.exists(instant_client_dir):
-        oracledb.init_oracle_client(lib_dir=instant_client_dir)
+    if oracledb.is_thin_mode():
+        instant_client_dir = os.getenv("ORACLE_CLIENT_LIB_DIR") or r"C:\Oracle\instantclient_23_0"
+        try:
+            oracledb.init_oracle_client(lib_dir=instant_client_dir)
+        except oracledb.Error as error:
+            raise RuntimeError(
+                "Oracle inputs require Thick mode to support this database's "
+                "national character set (DPY-3012 in Thin mode). Install Oracle "
+                "Instant Client matching your Python architecture and set "
+                "ORACLE_CLIENT_LIB_DIR in your .env file to the directory "
+                "containing oci.dll (for example, C:\\Oracle\\instantclient_23_0). "
+                "Restart Python after configuring the client."
+            ) from error
 
     if config is None:
         config = get_database_config()
@@ -69,7 +80,8 @@ def load_oracle_select(sql_query, config=None):
         )
 
     print("Loading STR source from Oracle SELECT query...")
-    rows = []
+    temp_dir = Path(tempfile.mkdtemp(prefix="oracle_qc_"))
+    parquet_paths = []
     with oracledb.connect(
         user=config["user"],
         password=config["password"],
@@ -81,21 +93,30 @@ def load_oracle_select(sql_query, config=None):
 
             batch_size = 1_000_000
             rows_fetched = 0
+            batch_index = 0
             while True:
                 batch = cursor.fetchmany(batch_size)
                 if not batch:
                     break
 
-                rows.extend(batch)
+                batch_df = pl.DataFrame(batch, schema=columns, orient="row")
+                parquet_path = temp_dir / f"oracle_batch_{batch_index:05d}.parquet"
+                batch_df.write_parquet(parquet_path)
+                parquet_paths.append(str(parquet_path))
+
                 rows_fetched += len(batch)
+                batch_index += 1
 
                 if rows_fetched % batch_size == 0:
                     print(f"Fetched {rows_fetched:,} rows from Oracle query...")
 
-    if not rows:
+    if not parquet_paths:
         return pl.DataFrame(schema=columns).lazy()
 
-    return pl.DataFrame(rows, schema=columns).lazy()
+    if len(parquet_paths) == 1:
+        return pl.scan_parquet(parquet_paths[0])
+
+    return pl.scan_parquet(parquet_paths)
 
 
 def load_data_source(data_source):
@@ -259,7 +280,7 @@ if __name__ == "__main__":
     initiative = "NCRMP"
     organization = "ESD"
     data_type = "TEMPERATURE"
-    region = "SAMOA"
+    region = "PRIAS"
     year = "2026"
 
     file_prefix = f"{initiative}_{organization}_{data_type}_{region}_{year}"
@@ -272,7 +293,8 @@ if __name__ == "__main__":
 
     oracle_view_sql = """
         SELECT *
-        FROM GISDAT.V_NCEI_OCC_STR_PRIA_ERRDAP_2026
+        FROM GISDAT.MV_OCC_STR_NCEI_PRIAS_ERRDAP
+        WHERE RETRIEVE_CRUISE = 'SE2602_PRIA_SAMOA'
     """
 
     # -------------------------------------------------------------------------
